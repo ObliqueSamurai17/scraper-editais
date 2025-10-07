@@ -191,6 +191,142 @@
       margin-bottom: 20px;
       opacity: 0.5;
     }
+
+    /* MODAL DE PROGRESSO */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal-content {
+      background: white;
+      border-radius: 12px;
+      padding: 30px;
+      max-width: 700px;
+      width: 90%;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+
+    .modal-header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    .modal-header h2 {
+      color: #667eea;
+      margin-bottom: 10px;
+    }
+
+    .progress-info {
+      text-align: center;
+      font-size: 1.1em;
+      color: #4a5568;
+      margin-bottom: 20px;
+    }
+
+    .progress-bar-container {
+      background: #e2e8f0;
+      height: 8px;
+      border-radius: 4px;
+      margin-bottom: 30px;
+      overflow: hidden;
+    }
+
+    .progress-bar {
+      background: linear-gradient(90deg, #667eea, #764ba2);
+      height: 100%;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    .agencies-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .agency-item {
+      display: flex;
+      align-items: center;
+      padding: 12px;
+      background: #f7fafc;
+      border-radius: 8px;
+      transition: all 0.3s;
+    }
+
+    .agency-item.processing {
+      background: #fff5e6;
+      border-left: 4px solid #ed8936;
+    }
+
+    .agency-item.completed {
+      background: #e6f7ed;
+      border-left: 4px solid #48bb78;
+    }
+
+    .agency-icon {
+      font-size: 1.5em;
+      margin-right: 12px;
+      min-width: 30px;
+      text-align: center;
+    }
+
+    .agency-name {
+      flex: 1;
+      font-weight: 500;
+      color: #2d3748;
+    }
+
+    .agency-status {
+      font-size: 0.85em;
+      color: #718096;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .spinning {
+      animation: spin 1s linear infinite;
+    }
+
+    .modal-footer {
+      margin-top: 20px;
+      text-align: center;
+    }
+
+    .close-btn {
+      padding: 10px 20px;
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 1em;
+      transition: all 0.3s;
+    }
+
+    .close-btn:hover {
+      background: #5568d3;
+    }
+
+    .close-btn:disabled {
+      background: #cbd5e0;
+      cursor: not-allowed;
+    }
     
     @media (max-width: 768px) {
       .container {
@@ -217,6 +353,11 @@
         display: block;
         margin-bottom: 5px;
       }
+
+      .modal-content {
+        width: 95%;
+        padding: 20px;
+      }
     }
   </style>
 </head>
@@ -234,7 +375,7 @@
       >
       <button type="submit">Buscar</button>
       <a href="/export.csv" class="btn btn-secondary">📥 Exportar CSV</a>
-      <a href="/coletar" class="btn btn-warning">🚀 Executar Coleta</a>
+      <a href="#" class="btn btn-warning" onclick="iniciarColeta(event)">🚀 Executar Coleta</a>
       <a href="/limpar_vencidos" class="btn btn-danger" onclick="return confirm('Deseja remover todos os editais com prazo vencido?')">🗑️ Limpar Vencidos</a>
     </form>
 
@@ -253,7 +394,7 @@
             <span><strong>🏢 Agência:</strong> {{ agencia or "-" }}</span>
             <span><strong>📅 Prazo:</strong> {{ prazo or "Não informado" }}</span>
             <span><strong>💰 Valor:</strong> {{ valor or "Não informado" }}</span>
-            <span><strong>📍 Fonte:</strong> {{ fonte or "-" }}</span>
+            <span><strong>📝 Fonte:</strong> {{ fonte or "-" }}</span>
           </div>
           
           <a href="{{ link }}" class="ed-link" target="_blank">
@@ -271,11 +412,145 @@
       </div>
     {% endif %}
     
-<div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0; text-align: center; color: #718096; font-size: 0.85em;">
-  <p>🔍 Monitorando <strong>30 agências</strong> de fomento (18 nacionais + 12 internacionais)</p>
-  <p style="margin-top: 8px;">Desenvolvido como TCC por <strong>Rony Gleyson Magalhães Barbosa</strong></p>
-  <p style="margin-top: 4px; font-size: 0.9em;">Instituto Federal Baiano • Campus Guanambi • 2025</p>
-</div>
+    <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0; text-align: center; color: #718096; font-size: 0.85em;">
+      <p>📋 Monitorando <strong>30 agências</strong> de fomento (18 nacionais + 12 internacionais)</p>
+      <p style="margin-top: 8px;">Desenvolvido como TCC por <strong>Rony Gleyson Magalhães Barbosa</strong></p>
+      <p style="margin-top: 4px; font-size: 0.9em;">Instituto Federal Baiano • Campus Guanambi • 2025</p>
+    </div>
   </div>
+
+  <!-- MODAL DE PROGRESSO -->
+  <div class="modal-overlay" id="progressModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>🚀 Coletando Editais</h2>
+        <p style="color: #718096;">Aguarde enquanto processamos as 30 agências...</p>
+      </div>
+
+      <div class="progress-info">
+        <span id="progressText">Iniciando coleta...</span>
+      </div>
+
+      <div class="progress-bar-container">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+
+      <div class="agencies-list" id="agenciesList">
+        <!-- Será preenchido via JavaScript -->
+      </div>
+
+      <div class="modal-footer">
+        <button class="close-btn" id="closeBtn" disabled onclick="fecharModal()">
+          Aguarde...
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const AGENCIES = [
+      "CNPq", "CAPES", "FINEP", "CONFAP",
+      "FAPESP (SP)", "FAPERJ (RJ)", "FAPEMIG (MG)", "FAPES (ES)",
+      "FACEPE (PE)", "FAPESQ (PB)", "FAPEAL (AL)", "FUNCAP (CE)", "FAPESB (BA)",
+      "FAPERGS (RS)", "FAPESC (SC)", "Fundação Araucária (PR)",
+      "FAPDF (DF)", "FUNDECT (MS)",
+      "FAPEAM (AM)", "FAPESPA (PA)",
+      "USAID (EUA)", "NSF (EUA)", "União Europeia (Horizon)", "AFD (França)", 
+      "AECID (Espanha)", "UKRI (Reino Unido)", "NSERC (Canadá)", "ACA (Academic Cooperation)"
+    ];
+
+    function iniciarColeta(event) {
+      event.preventDefault();
+      
+      // Mostrar modal
+      const modal = document.getElementById('progressModal');
+      modal.classList.add('active');
+      
+      // Criar lista de agências
+      const list = document.getElementById('agenciesList');
+      list.innerHTML = '';
+      
+      AGENCIES.forEach((name, index) => {
+        const item = document.createElement('div');
+        item.className = 'agency-item';
+        item.id = `agency-${index}`;
+        item.innerHTML = `
+          <div class="agency-icon">⏸️</div>
+          <div class="agency-name">${name}</div>
+          <div class="agency-status">Aguardando...</div>
+        `;
+        list.appendChild(item);
+      });
+      
+      // Iniciar SSE (Server-Sent Events)
+      const eventSource = new EventSource('/coletar_stream');
+      
+      eventSource.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'progress') {
+          // Atualizar barra de progresso
+          const percent = (data.current / data.total) * 100;
+          document.getElementById('progressBar').style.width = percent + '%';
+          document.getElementById('progressText').textContent = 
+            `Processando: ${data.current} de ${data.total}`;
+          
+          // Atualizar item atual como "processando"
+          const currentItem = document.getElementById(`agency-${data.current - 1}`);
+          if (currentItem) {
+            currentItem.className = 'agency-item processing';
+            currentItem.querySelector('.agency-icon').innerHTML = '<span class="spinning">⏳</span>';
+            currentItem.querySelector('.agency-status').textContent = 'Processando...';
+          }
+          
+          // Marcar anterior como concluído
+          if (data.current > 1) {
+            const prevItem = document.getElementById(`agency-${data.current - 2}`);
+            if (prevItem) {
+              prevItem.className = 'agency-item completed';
+              prevItem.querySelector('.agency-icon').textContent = '✅';
+              prevItem.querySelector('.agency-status').textContent = 'Concluído';
+            }
+          }
+        }
+        
+        if (data.type === 'complete') {
+          // Marcar último como concluído
+          const lastItem = document.getElementById(`agency-${data.total - 1}`);
+          if (lastItem) {
+            lastItem.className = 'agency-item completed';
+            lastItem.querySelector('.agency-icon').textContent = '✅';
+            lastItem.querySelector('.agency-status').textContent = 'Concluído';
+          }
+          
+          // Finalizar
+          document.getElementById('progressBar').style.width = '100%';
+          document.getElementById('progressText').innerHTML = 
+            `<strong>✅ Coleta finalizada!</strong> ${data.novos} novos editais encontrados`;
+          
+          const closeBtn = document.getElementById('closeBtn');
+          closeBtn.disabled = false;
+          closeBtn.textContent = 'Fechar e Recarregar';
+          closeBtn.onclick = function() {
+            window.location.reload();
+          };
+          
+          eventSource.close();
+        }
+      };
+      
+      eventSource.onerror = function() {
+        document.getElementById('progressText').innerHTML = 
+          '<strong style="color: #e53e3e;">❌ Erro na coleta</strong>';
+        document.getElementById('closeBtn').disabled = false;
+        document.getElementById('closeBtn').textContent = 'Fechar';
+        eventSource.close();
+      };
+    }
+
+    function fecharModal() {
+      document.getElementById('progressModal').classList.remove('active');
+    }
+  </script>
 </body>
 </html>
