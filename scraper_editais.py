@@ -367,6 +367,22 @@ SOURCES = [
      "fonte": "FAPESB (BA)", 
      "keywords": ["edital", "chamada"]},
     
+    {"url": "https://www.fapern.rn.gov.br/", 
+     "fonte": "FAPERN (RN)", 
+     "keywords": ["edital", "chamada"]},
+    
+    {"url": "https://www.fapepi.pi.gov.br/", 
+     "fonte": "FAPEPI (PI)", 
+     "keywords": ["edital", "chamada"]},
+    
+    {"url": "https://www.fapitec.se.gov.br/", 
+     "fonte": "FAPITEC (SE)", 
+     "keywords": ["edital", "chamada"]},
+    
+    {"url": "https://www.fapema.br/", 
+     "fonte": "FAPEMA (MA)", 
+     "keywords": ["edital", "chamada"]},
+    
     # Região Sul
     {"url": "https://www.fapergs.rs.gov.br/", 
      "fonte": "FAPERGS (RS)", 
@@ -389,6 +405,10 @@ SOURCES = [
      "fonte": "FUNDECT (MS)", 
      "keywords": ["edital", "chamada"]},
     
+    {"url": "https://www.fapeg.go.gov.br/", 
+     "fonte": "FAPEG (GO)", 
+     "keywords": ["edital", "chamada"]},
+    
     # Região Norte
     {"url": "https://www.fapeam.am.gov.br/", 
      "fonte": "FAPEAM (AM)", 
@@ -396,6 +416,22 @@ SOURCES = [
     
     {"url": "https://www.fapespa.pa.gov.br/", 
      "fonte": "FAPESPA (PA)", 
+     "keywords": ["edital", "chamada"]},
+    
+    {"url": "https://fapac.ac.gov.br/", 
+     "fonte": "FAPEAC (AC)", 
+     "keywords": ["edital", "chamada"]},
+    
+    {"url": "https://www.fapero.ro.gov.br/", 
+     "fonte": "FAPERO (RO)", 
+     "keywords": ["edital", "chamada"]},
+    
+    {"url": "https://www.to.gov.br/fapt", 
+     "fonte": "FAPTO (TO)", 
+     "keywords": ["edital", "chamada"]},
+    
+    {"url": "https://www.fapeap.ap.gov.br/", 
+     "fonte": "FAPEAP (AP)", 
      "keywords": ["edital", "chamada"]},
     
     # ========== AGÊNCIAS INTERNACIONAIS ==========
@@ -855,6 +891,8 @@ if __name__ == "__main__":
     internacionais = [s for s in SOURCES if s not in nacionais]
     for s in internacionais:
         print(f"   • {s['fonte']}")
+    
+    print(f"\n📋 Total: {len(nacionais)} nacionais + {len(internacionais)} internacionais = {len(SOURCES)} agências")
     
     print("\n🌐 Servidor rodando em: http://127.0.0.1:5000")
     print("   - Página principal: http://127.0.0.1:5000")
