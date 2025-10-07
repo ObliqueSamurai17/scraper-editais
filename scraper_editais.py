@@ -10,6 +10,7 @@ import sqlite3
 import time
 import hashlib
 import csv
+import json
 from urllib.parse import urljoin, urlparse, unquote
 from datetime import datetime, timedelta
 import requests
@@ -486,7 +487,7 @@ def is_likely_edital(titulo, texto):
         return False
     
     # FILTRO 5: Padrão de numeração (Nº XX/YYYY ou N° XX/YYYY)
-    has_number_pattern = bool(re.search(r'n[º°]\s*\d+/\d{4}', titulo_lower))
+    has_number_pattern = bool(re.search(r'n[ºº]\s*\d+/\d{4}', titulo_lower))
     
     # FILTRO 6: Tamanho mínimo do texto (500 palavras)
     if texto:
@@ -523,24 +524,29 @@ def clean_title(titulo):
         titulo = titulo[:150] + "..."
     
     return titulo
-	
-	
-	# ==================== COLETOR PRINCIPAL ====================
-def coletar_pdf_first(timeout=REQUEST_TIMEOUT, max_per_source=MAX_PER_SOURCE):
+
+# ==================== COLETOR PRINCIPAL ====================
+def coletar_pdf_first(timeout=REQUEST_TIMEOUT, max_per_source=MAX_PER_SOURCE, progress_callback=None):
     """
     Coleta editais de todas as fontes configuradas.
     Estratégia: busca PDFs primeiro, depois links candidatos.
+    progress_callback: função para reportar progresso (recebe current, total)
     """
     headers = {"User-Agent": USER_AGENT}
     results = []
+    total_sources = len(SOURCES)
     
-    for src in SOURCES:
+    for idx, src in enumerate(SOURCES, 1):
         url = src["url"]
         fonte = src.get("fonte")
         keywords = src.get("keywords", ["edital", "chamada"])
         
+        # Reportar progresso
+        if progress_callback:
+            progress_callback(idx, total_sources)
+        
         print(f"\n{'='*60}")
-        print(f"[COLETA] Fonte: {fonte}")
+        print(f"[COLETA] Fonte: {fonte} ({idx}/{total_sources})")
         print(f"         URL: {url}")
         print(f"{'='*60}")
         
@@ -592,7 +598,7 @@ def coletar_pdf_first(timeout=REQUEST_TIMEOUT, max_per_source=MAX_PER_SOURCE):
                 print("     ❌ Falhou download")
                 continue
             
-# Extrair texto do PDF
+            # Extrair texto do PDF
             text = extract_text_from_pdf_bytes(b)
             if not text:
                 print("     ⚠ PDF sem texto extraível, ignorando...")
@@ -608,7 +614,7 @@ def coletar_pdf_first(timeout=REQUEST_TIMEOUT, max_per_source=MAX_PER_SOURCE):
                 print(f"     ⏭ Não parece ser um edital, ignorando...")
                 count += 1
                 continue
-				
+            
             # Montar objeto edital
             doc = {
                 "titulo": normalize_text(titulo) or title_guess,
@@ -668,9 +674,114 @@ def index():
     
     return render_template("index.html", editais=rows, termo=termo)
 
+@app.route("/coletar_stream")
+def coletar_stream():
+    """Executa coleta com progresso em tempo real via Server-Sent Events"""
+    def generate():
+        novos = []
+        
+        def progress_callback(current, total):
+            # Enviar atualização de progresso
+            data = json.dumps({
+                "type": "progress",
+                "current": current,
+                "total": total
+            })
+            return f"data: {data}\n\n"
+        
+        # Enviar atualizações durante a coleta
+        total = len(SOURCES)
+        for i in range(1, total + 1):
+            yield progress_callback(i, total)
+            
+            # Processar uma fonte por vez
+            if i <= len(SOURCES):
+                src = SOURCES[i-1]
+                url = src["url"]
+                fonte = src.get("fonte")
+                keywords = src.get("keywords", ["edital", "chamada"])
+                headers = {"User-Agent": USER_AGENT}
+                
+                try:
+                    r = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+                    r.raise_for_status()
+                    html = r.text
+                    
+                    pdfs = find_pdf_links_on_page(url, html)
+                    
+                    if not pdfs:
+                        cand = find_candidate_links_by_keywords(url, html, keywords)
+                        checked = 0
+                        for full, txt in cand:
+                            if checked >= MAX_PER_SOURCE:
+                                break
+                            try:
+                                h = requests.head(full, headers=headers, timeout=8, allow_redirects=True)
+                                ctype = h.headers.get("content-type", "").lower()
+                                if "pdf" in ctype or full.lower().endswith(".pdf"):
+                                    pdfs.append((full, txt))
+                                checked += 1
+                            except Exception:
+                                continue
+                    
+                    count = 0
+                    for pdf_url, link_text in pdfs:
+                        if count >= MAX_PER_SOURCE:
+                            break
+                        
+                        b = download_bytes(pdf_url, timeout=REQUEST_TIMEOUT)
+                        if not b:
+                            continue
+                        
+                        text = extract_text_from_pdf_bytes(b)
+                        if not text:
+                            continue
+                        
+                        titulo = extract_first_title_from_text(text) or link_text
+                        titulo = clean_title(titulo)
+                        prazo, valor = extract_prazo_and_valor(text)
+                        
+                        if not is_likely_edital(titulo, text):
+                            count += 1
+                            continue
+                        
+                        doc = {
+                            "titulo": normalize_text(titulo) or link_text,
+                            "agencia": fonte,
+                            "prazo": prazo,
+                            "valor": valor,
+                            "link": pdf_url,
+                            "fonte": fonte
+                        }
+                        
+                        if prazo:
+                            is_valid = is_date_future(prazo)
+                            if is_valid is False:
+                                count += 1
+                                continue
+                        
+                        if salvar(doc):
+                            novos.append(doc)
+                        
+                        count += 1
+                        time.sleep(0.7)
+                
+                except Exception as e:
+                    print(f"Erro processando {fonte}: {e}")
+        
+        # Enviar mensagem final
+        final_data = json.dumps({
+            "type": "complete",
+            "total": total,
+            "novos": len(novos)
+        })
+        yield f"data: {final_data}\n\n"
+    
+    return Response(generate(), mimetype='text/event-stream')
+
 @app.route("/coletar")
 def rota_coletar():
-    """Executa coleta manual"""
+    """Executa coleta manual (fallback sem progresso)"""
     print("\n🚀 INICIANDO COLETA MANUAL...")
     novos = coletar_pdf_first()
     print(f"\n✅ Coleta finalizada! Novos editais: {len(novos)}")
@@ -735,7 +846,7 @@ if __name__ == "__main__":
     init_db()
     print("✅ Banco de dados inicializado")
     print(f"📊 Fontes configuradas: {len(SOURCES)} agências")
-    print("\n🔍 Agências Nacionais:")
+    print("\n🇧🇷 Agências Nacionais:")
     nacionais = [s for s in SOURCES if any(x in s['fonte'] for x in ['CNPq', 'CAPES', 'FINEP', 'CONFAP', 'FAP', 'FUNC', 'Fund'])]
     for s in nacionais:
         print(f"   • {s['fonte']}")
@@ -751,4 +862,4 @@ if __name__ == "__main__":
     print("   - Exportar CSV: http://127.0.0.1:5000/export.csv")
     print("\n💡 Pressione CTRL+C para parar\n")
     
-app.run(host="0.0.0.0", port=10000, debug=False)
+    app.run(host="0.0.0.0", port=10000, debug=False)
