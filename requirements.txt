@@ -3,3 +3,4 @@ requests
 beautifulsoup4
 lxml
 pypdf
+APScheduler==3.10.4
