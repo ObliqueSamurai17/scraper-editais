@@ -95,7 +95,7 @@ def is_date_future(date_str):
 
 # ==================== BANCO DE DADOS ====================
 def init_db():
-    """Cria tabelas se não existirem"""
+    """Cria tabelas se não existirem e faz migração se necessário"""
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     
@@ -115,6 +115,15 @@ def init_db():
     )
     """)
     
+    # MIGRAÇÃO: Adicionar coluna data_publicacao se não existir
+    try:
+        cur.execute("SELECT data_publicacao FROM editais LIMIT 1")
+    except sqlite3.OperationalError:
+        print("⚙️ Adicionando coluna 'data_publicacao' na tabela editais...")
+        cur.execute("ALTER TABLE editais ADD COLUMN data_publicacao TEXT")
+        conn.commit()
+        print("✅ Migração concluída!")
+    
     # Tabela de configuração (para última coleta)
     cur.execute("""
     CREATE TABLE IF NOT EXISTS config (
@@ -129,25 +138,32 @@ def init_db():
 
 def get_ultima_coleta():
     """Retorna data/hora da última coleta"""
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT valor FROM config WHERE chave = 'ultima_coleta'")
-    row = cur.fetchone()
-    conn.close()
-    return row[0] if row else None
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("SELECT valor FROM config WHERE chave = 'ultima_coleta'")
+        row = cur.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception as e:
+        print(f"Erro ao buscar última coleta: {e}")
+        return None
 
 def set_ultima_coleta():
     """Registra data/hora da coleta atual"""
-    agora = datetime.now().strftime("%d/%m/%Y às %H:%M")
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT OR REPLACE INTO config (chave, valor, atualizado_em)
-        VALUES ('ultima_coleta', ?, CURRENT_TIMESTAMP)
-    """, (agora,))
-    conn.commit()
-    conn.close()
-    print(f"✅ Última coleta registrada: {agora}")
+    try:
+        agora = datetime.now().strftime("%d/%m/%Y às %H:%M")
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT OR REPLACE INTO config (chave, valor, atualizado_em)
+            VALUES ('ultima_coleta', ?, CURRENT_TIMESTAMP)
+        """, (agora,))
+        conn.commit()
+        conn.close()
+        print(f"✅ Última coleta registrada: {agora}")
+    except Exception as e:
+        print(f"⚠️ Erro ao registrar última coleta: {e}")
 
 def exists_fp(fp):
     conn = sqlite3.connect(DB_PATH)
@@ -164,6 +180,7 @@ def salvar(d):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     try:
+        # Tentar salvar com data_publicacao
         cur.execute("""
         INSERT INTO editais (titulo, agencia, prazo, valor, link, fonte, data_publicacao, fingerprint)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -171,6 +188,18 @@ def salvar(d):
               d.get("valor"), d.get("link"), d.get("fonte"), 
               d.get("data_publicacao"), fp))
         conn.commit()
+    except sqlite3.OperationalError:
+        # Se falhar (coluna não existe), salvar sem data_publicacao
+        try:
+            cur.execute("""
+            INSERT INTO editais (titulo, agencia, prazo, valor, link, fonte, fingerprint)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (d.get("titulo"), d.get("agencia"), d.get("prazo"), 
+                  d.get("valor"), d.get("link"), d.get("fonte"), fp))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            conn.close()
+            return False
     except sqlite3.IntegrityError:
         conn.close()
         return False
@@ -684,31 +713,57 @@ app = Flask(__name__)
 @app.route("/")
 def index():
     termo = request.args.get("q", "").strip()
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
     
-    if termo:
-        cur.execute("""
-            SELECT titulo, agencia, prazo, valor, link, fonte, data_publicacao 
-            FROM editais 
-            WHERE titulo LIKE ? OR agencia LIKE ? 
-            ORDER BY criado_em DESC
-        """, (f"%{termo}%", f"%{termo}%"))
-    else:
-        cur.execute("""
-            SELECT titulo, agencia, prazo, valor, link, fonte, data_publicacao 
-            FROM editais 
-            ORDER BY criado_em DESC
-        """)
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        
+        # Verificar se coluna data_publicacao existe
+        try:
+            if termo:
+                cur.execute("""
+                    SELECT titulo, agencia, prazo, valor, link, fonte, data_publicacao 
+                    FROM editais 
+                    WHERE titulo LIKE ? OR agencia LIKE ? 
+                    ORDER BY criado_em DESC
+                """, (f"%{termo}%", f"%{termo}%"))
+            else:
+                cur.execute("""
+                    SELECT titulo, agencia, prazo, valor, link, fonte, data_publicacao 
+                    FROM editais 
+                    ORDER BY criado_em DESC
+                """)
+        except sqlite3.OperationalError:
+            # Coluna data_publicacao não existe, buscar sem ela
+            if termo:
+                cur.execute("""
+                    SELECT titulo, agencia, prazo, valor, link, fonte, NULL as data_publicacao 
+                    FROM editais 
+                    WHERE titulo LIKE ? OR agencia LIKE ? 
+                    ORDER BY criado_em DESC
+                """, (f"%{termo}%", f"%{termo}%"))
+            else:
+                cur.execute("""
+                    SELECT titulo, agencia, prazo, valor, link, fonte, NULL as data_publicacao 
+                    FROM editais 
+                    ORDER BY criado_em DESC
+                """)
+        
+        rows = cur.fetchall()
+        
+        # Buscar última coleta
+        try:
+            ultima_coleta = get_ultima_coleta()
+        except:
+            ultima_coleta = None
+        
+        conn.close()
+        
+        return render_template("index.html", editais=rows, termo=termo, ultima_coleta=ultima_coleta)
     
-    rows = cur.fetchall()
-    
-    # Buscar última coleta
-    ultima_coleta = get_ultima_coleta()
-    
-    conn.close()
-    
-    return render_template("index.html", editais=rows, termo=termo, ultima_coleta=ultima_coleta)
+    except Exception as e:
+        print(f"Erro na página index: {e}")
+        return render_template("index.html", editais=[], termo=termo, ultima_coleta=None)
 
 @app.route("/coletar_stream")
 def coletar_stream():
@@ -862,27 +917,38 @@ if __name__ == "__main__":
     print("🎓 SCRAPER DE EDITAIS - Iniciando...")
     print("="*60)
     
-    init_db()
-    print("✅ Banco de dados inicializado")
+    try:
+        init_db()
+        print("✅ Banco de dados inicializado")
+    except Exception as e:
+        print(f"❌ Erro ao inicializar banco: {e}")
+        print("⚠️ Continuando sem banco de dados...")
     
     # Configurar scheduler para coleta automatizada
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(
-        func=job_coleta_automatizada,
-        trigger="cron",
-        hour=COLETA_HORA,
-        minute=0,
-        id="coleta_diaria",
-        name="Coleta Automatizada Diária"
-    )
-    scheduler.start()
-    print(f"🤖 Coleta automatizada configurada para {COLETA_HORA}:00 diariamente")
+    try:
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(
+            func=job_coleta_automatizada,
+            trigger="cron",
+            hour=COLETA_HORA,
+            minute=0,
+            id="coleta_diaria",
+            name="Coleta Automatizada Diária"
+        )
+        scheduler.start()
+        print(f"🤖 Coleta automatizada configurada para {COLETA_HORA}:00 diariamente")
+    except Exception as e:
+        print(f"⚠️ Scheduler não iniciado: {e}")
+        print("⚠️ Coleta automatizada desabilitada, use coleta manual")
     
-    ultima = get_ultima_coleta()
-    if ultima:
-        print(f"📅 Última coleta: {ultima}")
-    else:
-        print("📅 Nenhuma coleta registrada ainda")
+    try:
+        ultima = get_ultima_coleta()
+        if ultima:
+            print(f"📅 Última coleta: {ultima}")
+        else:
+            print("📅 Nenhuma coleta registrada ainda")
+    except Exception:
+        print("📅 Sem histórico de coletas")
     
     print(f"📊 Fontes configuradas: {len(SOURCES)} agências")
     nacionais = [s for s in SOURCES if any(x in s['fonte'] for x in ['CNPq', 'CAPES', 'FINEP', 'CONFAP', 'FAP', 'FUNC', 'Fund'])]
@@ -898,5 +964,8 @@ if __name__ == "__main__":
     try:
         app.run(host="0.0.0.0", port=10000, debug=False)
     except (KeyboardInterrupt, SystemExit):
-        scheduler.shutdown()
+        try:
+            scheduler.shutdown()
+        except:
+            pass
         print("\n👋 Servidor encerrado")
