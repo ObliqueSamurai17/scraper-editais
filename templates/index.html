@@ -35,7 +35,7 @@
     
     h1 {
       color: #667eea;
-      margin-bottom: 20px;
+      margin-bottom: 10px;
       font-size: 2em;
       text-align: center;
     }
@@ -43,8 +43,32 @@
     .subtitle {
       text-align: center;
       color: #666;
-      margin-bottom: 30px;
+      margin-bottom: 10px;
       font-size: 0.9em;
+    }
+
+    .ultima-atualizacao {
+      text-align: center;
+      padding: 10px;
+      background: #e6f7ed;
+      border-left: 4px solid #48bb78;
+      border-radius: 6px;
+      margin-bottom: 20px;
+      color: #2d3748;
+      font-size: 0.9em;
+    }
+
+    .ultima-atualizacao.nunca {
+      background: #fff5e6;
+      border-left-color: #ed8936;
+    }
+
+    .ultima-atualizacao strong {
+      color: #48bb78;
+    }
+
+    .ultima-atualizacao.nunca strong {
+      color: #ed8936;
     }
     
     form {
@@ -366,6 +390,16 @@
     <h1>🎓 Scraper de Editais</h1>
     <p class="subtitle">Sistema de Monitoramento de Oportunidades de Financiamento</p>
     
+    {% if ultima_coleta %}
+      <div class="ultima-atualizacao">
+        🕒 <strong>Última atualização:</strong> {{ ultima_coleta }}
+      </div>
+    {% else %}
+      <div class="ultima-atualizacao nunca">
+        ⚠️ <strong>Nenhuma coleta realizada ainda.</strong> Execute a coleta para começar!
+      </div>
+    {% endif %}
+    
     <form method="get" action="/">
       <input 
         type="text" 
@@ -384,7 +418,7 @@
         📊 <strong>{{ editais|length }}</strong> edita{{ 'is' if editais|length != 1 else 'l' }} encontrado{{ 's' if editais|length != 1 else '' }}
       </div>
 
-      {% for titulo, agencia, prazo, valor, link, fonte in editais %}
+      {% for titulo, agencia, prazo, valor, link, fonte, data_publicacao in editais %}
         <div class="ed">
           <div class="ed-title">
             {{ titulo or "(sem título)" }}
@@ -392,14 +426,21 @@
           
           <div class="meta">
             <span><strong>🏢 Agência:</strong> {{ agencia or "-" }}</span>
-            <span><strong>📅 Prazo:</strong> {{ prazo or "Não informado" }}</span>
+            {% if data_publicacao %}
+            <span><strong>📅 Publicado:</strong> {{ data_publicacao }}</span>
+            {% endif %}
+            <span><strong>⏰ Prazo:</strong> {{ prazo or "Não informado" }}</span>
             <span><strong>💰 Valor:</strong> {{ valor or "Não informado" }}</span>
             <span><strong>📝 Fonte:</strong> {{ fonte or "-" }}</span>
           </div>
           
-          <a href="{{ link }}" class="ed-link" target="_blank">
+          {% if link %}
+          <a href="{{ link }}" class="ed-link" target="_blank" rel="noopener noreferrer">
             📄 Abrir Edital →
           </a>
+          {% else %}
+          <span style="color: #a0aec0; font-size: 0.9em;">📄 Link não disponível</span>
+          {% endif %}
         </div>
       {% endfor %}
     {% else %}
@@ -414,6 +455,7 @@
     
     <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0; text-align: center; color: #718096; font-size: 0.85em;">
       <p>📋 Monitorando <strong>37 agências</strong> de fomento (29 nacionais + 8 internacionais)</p>
+      <p style="margin-top: 8px;">🤖 Coleta automatizada diária às 6h da manhã</p>
       <p style="margin-top: 8px;">Desenvolvido como TCC por <strong>Rony Gleyson Magalhães Barbosa</strong></p>
       <p style="margin-top: 4px; font-size: 0.9em;">Instituto Federal Baiano • Campus Guanambi • 2025</p>
     </div>
@@ -463,11 +505,9 @@
     function iniciarColeta(event) {
       event.preventDefault();
       
-      // Mostrar modal
       const modal = document.getElementById('progressModal');
       modal.classList.add('active');
       
-      // Criar lista de agências
       const list = document.getElementById('agenciesList');
       list.innerHTML = '';
       
@@ -483,20 +523,17 @@
         list.appendChild(item);
       });
       
-      // Iniciar SSE (Server-Sent Events)
       const eventSource = new EventSource('/coletar_stream');
       
       eventSource.onmessage = function(event) {
         const data = JSON.parse(event.data);
         
         if (data.type === 'progress') {
-          // Atualizar barra de progresso
           const percent = (data.current / data.total) * 100;
           document.getElementById('progressBar').style.width = percent + '%';
           document.getElementById('progressText').textContent = 
             `Processando: ${data.current} de ${data.total}`;
           
-          // Atualizar item atual como "processando"
           const currentItem = document.getElementById(`agency-${data.current - 1}`);
           if (currentItem) {
             currentItem.className = 'agency-item processing';
@@ -504,7 +541,6 @@
             currentItem.querySelector('.agency-status').textContent = 'Processando...';
           }
           
-          // Marcar anterior como concluído
           if (data.current > 1) {
             const prevItem = document.getElementById(`agency-${data.current - 2}`);
             if (prevItem) {
@@ -516,7 +552,6 @@
         }
         
         if (data.type === 'complete') {
-          // Marcar último como concluído
           const lastItem = document.getElementById(`agency-${data.total - 1}`);
           if (lastItem) {
             lastItem.className = 'agency-item completed';
@@ -524,7 +559,6 @@
             lastItem.querySelector('.agency-status').textContent = 'Concluído';
           }
           
-          // Finalizar
           document.getElementById('progressBar').style.width = '100%';
           document.getElementById('progressText').innerHTML = 
             `<strong>✅ Coleta finalizada!</strong> ${data.novos} novos editais encontrados`;
