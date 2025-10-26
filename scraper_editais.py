@@ -174,9 +174,16 @@ def exists_fp(fp):
     return r
 
 def salvar(d):
-    fp = make_fingerprint(d.get("link"), d.get("titulo"))
+    # VALIDAÇÃO: não salvar se link estiver vazio ou None
+    link = d.get("link")
+    if not link or link.strip() == "":
+        print(f"     ⚠️ Link vazio, não salvando: {d.get('titulo', 'sem título')[:50]}")
+        return False
+    
+    fp = make_fingerprint(link, d.get("titulo"))
     if exists_fp(fp):
         return False
+    
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     try:
@@ -185,9 +192,10 @@ def salvar(d):
         INSERT INTO editais (titulo, agencia, prazo, valor, link, fonte, data_publicacao, fingerprint)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (d.get("titulo"), d.get("agencia"), d.get("prazo"), 
-              d.get("valor"), d.get("link"), d.get("fonte"), 
+              d.get("valor"), link, d.get("fonte"), 
               d.get("data_publicacao"), fp))
         conn.commit()
+        print(f"     🔗 Link salvo: {link[:80]}")
     except sqlite3.OperationalError:
         # Se falhar (coluna não existe), salvar sem data_publicacao
         try:
@@ -195,8 +203,9 @@ def salvar(d):
             INSERT INTO editais (titulo, agencia, prazo, valor, link, fonte, fingerprint)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (d.get("titulo"), d.get("agencia"), d.get("prazo"), 
-                  d.get("valor"), d.get("link"), d.get("fonte"), fp))
+                  d.get("valor"), link, d.get("fonte"), fp))
             conn.commit()
+            print(f"     🔗 Link salvo: {link[:80]}")
         except sqlite3.IntegrityError:
             conn.close()
             return False
@@ -826,12 +835,17 @@ def coletar_stream():
                             count += 1
                             continue
                         
+                        # VALIDAÇÃO: Garantir que pdf_url não está vazio
+                        if not pdf_url or pdf_url.strip() == "":
+                            count += 1
+                            continue
+                        
                         doc = {
                             "titulo": normalize_text(titulo) or link_text,
                             "agencia": fonte,
                             "prazo": prazo,
                             "valor": valor,
-                            "link": pdf_url,
+                            "link": pdf_url,  # <-- IMPORTANTE: pdf_url deve estar correto
                             "fonte": fonte,
                             "data_publicacao": data_pub
                         }
