@@ -435,11 +435,8 @@
           </div>
           
           {% if link %}
-          <a href="/ver?url={{ link|urlencode }}" class="ed-link" target="_blank" rel="noopener noreferrer">
-            📄 Visualizar Edital →
-          </a>
-          <a href="{{ link }}" class="ed-link" style="background: #48bb78; margin-left: 10px;" download>
-            📥 Baixar
+          <a href="{{ link }}" class="ed-link" target="_blank" rel="noopener noreferrer">
+            📄 Abrir Edital →
           </a>
           {% else %}
           <span style="color: #a0aec0; font-size: 0.9em;">📄 Link não disponível</span>
