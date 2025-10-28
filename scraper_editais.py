@@ -764,7 +764,7 @@ def download_pdf():
         filename = filename_from_url(url) or "edital.pdf"
         if not filename.lower().endswith('.pdf'):
             filename = filename + '.pdf'
-        return Response(r.content, mimetype='application/pdf', headers={'Content-Disposition': f'attachment; filename="{filename}"', 'Content-Type': 'application/pdf'})
+        return Response(r.content, mimetype='application/pdf', headers={'Content-Disposition': f'inline; filename="{filename}"', 'Content-Type': 'application/pdf'})
     except requests.exceptions.Timeout:
         return f"<html><head><title>Timeout</title></head><body style='font-family: Arial; padding: 40px; text-align: center;'><h1>⏱️ Tempo esgotado</h1><p>Tente: <a href='{url}' target='_blank'>{url[:80]}...</a></p><p><a href='/'>← Voltar</a></p></body></html>", 504
     except Exception as e:
