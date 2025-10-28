@@ -58,7 +58,6 @@ def parse_brazilian_date(date_str):
     
     date_str = date_str.strip()
     
-    # Formato: "23 de outubro de 2024"
     match = re.search(r'(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})', date_str, re.I)
     if match:
         day = int(match.group(1))
@@ -71,7 +70,6 @@ def parse_brazilian_date(date_str):
             except ValueError:
                 pass
     
-    # Formato: DD/MM/YYYY ou DD-MM-YYYY ou DD.MM.YYYY
     for sep in ['/', '-', '.']:
         if sep in date_str:
             parts = date_str.split(sep)
@@ -99,7 +97,6 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     
-    # Tabela de editais
     cur.execute("""
     CREATE TABLE IF NOT EXISTS editais (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,7 +112,6 @@ def init_db():
     )
     """)
     
-    # MIGRAÇÃO: Adicionar coluna data_publicacao se não existir
     try:
         cur.execute("SELECT data_publicacao FROM editais LIMIT 1")
     except sqlite3.OperationalError:
@@ -124,7 +120,6 @@ def init_db():
         conn.commit()
         print("✅ Migração concluída!")
     
-    # Tabela de configuração (para última coleta)
     cur.execute("""
     CREATE TABLE IF NOT EXISTS config (
         chave TEXT PRIMARY KEY,
@@ -137,7 +132,6 @@ def init_db():
     conn.close()
 
 def get_ultima_coleta():
-    """Retorna data/hora da última coleta"""
     try:
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
@@ -150,7 +144,6 @@ def get_ultima_coleta():
         return None
 
 def set_ultima_coleta():
-    """Registra data/hora da coleta atual"""
     try:
         agora = datetime.now().strftime("%d/%m/%Y às %H:%M")
         conn = sqlite3.connect(DB_PATH)
@@ -174,7 +167,6 @@ def exists_fp(fp):
     return r
 
 def salvar(d):
-    # VALIDAÇÃO: não salvar se link estiver vazio ou None
     link = d.get("link")
     if not link or link.strip() == "":
         print(f"     ⚠️ Link vazio, não salvando: {d.get('titulo', 'sem título')[:50]}")
@@ -187,7 +179,6 @@ def salvar(d):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     try:
-        # Tentar salvar com data_publicacao
         cur.execute("""
         INSERT INTO editais (titulo, agencia, prazo, valor, link, fonte, data_publicacao, fingerprint)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -197,7 +188,6 @@ def salvar(d):
         conn.commit()
         print(f"     🔗 Link salvo: {link[:80]}")
     except sqlite3.OperationalError:
-        # Se falhar (coluna não existe), salvar sem data_publicacao
         try:
             cur.execute("""
             INSERT INTO editais (titulo, agencia, prazo, valor, link, fonte, fingerprint)
@@ -256,36 +246,28 @@ def extract_first_title_from_text(text):
     return lines[0] if lines else None
 
 def extract_data_publicacao(text):
-    """
-    Extrai data de publicação do edital.
-    Procura por padrões como "Publicado em", "Data de publicação", etc.
-    """
     if not text:
         return None
     
-    # Buscar padrões de publicação nas primeiras linhas
     head = text[:3000]
     
     patterns = [
         r'publicad[oa]\s+em\s*:?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})',
         r'data\s+de\s+publica[çc][ãa]o\s*:?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})',
         r'publica[çc][ãa]o\s*:?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})',
-        r'(\d{1,2}\s+de\s+\w+\s+de\s+\d{4})',  # Data por extenso
+        r'(\d{1,2}\s+de\s+\w+\s+de\s+\d{4})',
     ]
     
     for pattern in patterns:
         match = re.search(pattern, head, re.I)
         if match:
             data_str = match.group(1)
-            # Validar se é uma data válida
             if parse_brazilian_date(data_str):
                 return data_str
     
-    # Se não encontrou padrão específico, pega a primeira data do documento
     dates_found = DATE_RE.findall(head)
     if dates_found:
-        # Pega a primeira data que seja válida
-        for date_str in dates_found[:3]:  # Verifica as 3 primeiras
+        for date_str in dates_found[:3]:
             if parse_brazilian_date(date_str):
                 return date_str
     
@@ -332,15 +314,20 @@ def find_pdf_links_on_page(base_url, html_text):
         if href.lower().endswith(".pdf"):
             full = href if href.startswith("http") else urljoin(base, href)
             title = a.get_text(" ", strip=True) or filename_from_url(full) or ""
-            links.append((full, title))
+            if full and full.startswith("http"):
+                links.append((full, title))
+            else:
+                print(f"     ⚠️ URL inválida ignorada: {full}")
     
     for a in soup.find_all("a", href=True):
         href = a['href'].strip()
         if '?' in href and 'pdf' in href.lower():
             full = href if href.startswith("http") else urljoin(base, href)
             title = a.get_text(" ", strip=True) or filename_from_url(full) or ""
-            if (full, title) not in links:
+            if (full, title) not in links and full and full.startswith("http"):
                 links.append((full, title))
+            elif not full or not full.startswith("http"):
+                print(f"     ⚠️ URL inválida ignorada: {full}")
     
     return links
 
@@ -356,6 +343,10 @@ def find_candidate_links_by_keywords(base_url, html_text, keywords):
                 href = a['href'].strip()
                 txt = a.get_text(" ", strip=True)
                 full = href if href.startswith("http") else urljoin(base, href)
+                
+                if not full or not full.startswith("http"):
+                    continue
+                
                 key = full.split("#")[0].rstrip("/")
                 
                 if key in seen:
@@ -373,6 +364,10 @@ def find_candidate_links_by_keywords(base_url, html_text, keywords):
             href = a['href'].strip()
             txt = a.get_text(" ", strip=True)
             full = href if href.startswith("http") else urljoin(base, href)
+            
+            if not full or not full.startswith("http"):
+                continue
+            
             lowtxt = (txt or "").lower()
             lowhref = full.lower()
             
@@ -672,6 +667,11 @@ def coletar_pdf_first(timeout=REQUEST_TIMEOUT, max_per_source=MAX_PER_SOURCE, pr
                 count += 1
                 continue
             
+            if not pdf_url or pdf_url.strip() == "":
+                print(f"     ⚠️ PDF URL vazio, pulando...")
+                count += 1
+                continue
+            
             doc = {
                 "titulo": normalize_text(titulo) or title_guess,
                 "agencia": fonte,
@@ -700,14 +700,12 @@ def coletar_pdf_first(timeout=REQUEST_TIMEOUT, max_per_source=MAX_PER_SOURCE, pr
             count += 1
             time.sleep(0.7)
     
-    # Registrar data da coleta
     set_ultima_coleta()
     
     return results
 
 # ==================== COLETA AUTOMATIZADA ====================
 def job_coleta_automatizada():
-    """Job executado pelo scheduler"""
     print("\n🤖 COLETA AUTOMATIZADA INICIADA")
     print(f"⏰ Horário: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
     try:
@@ -727,7 +725,6 @@ def index():
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
         
-        # Verificar se coluna data_publicacao existe
         try:
             if termo:
                 cur.execute("""
@@ -743,7 +740,6 @@ def index():
                     ORDER BY criado_em DESC
                 """)
         except sqlite3.OperationalError:
-            # Coluna data_publicacao não existe, buscar sem ela
             if termo:
                 cur.execute("""
                     SELECT titulo, agencia, prazo, valor, link, fonte, NULL as data_publicacao 
@@ -760,7 +756,6 @@ def index():
         
         rows = cur.fetchall()
         
-        # Buscar última coleta
         try:
             ultima_coleta = get_ultima_coleta()
         except:
@@ -835,7 +830,6 @@ def coletar_stream():
                             count += 1
                             continue
                         
-                        # VALIDAÇÃO: Garantir que pdf_url não está vazio
                         if not pdf_url or pdf_url.strip() == "":
                             count += 1
                             continue
@@ -845,7 +839,7 @@ def coletar_stream():
                             "agencia": fonte,
                             "prazo": prazo,
                             "valor": valor,
-                            "link": pdf_url,  # <-- IMPORTANTE: pdf_url deve estar correto
+                            "link": pdf_url,
                             "fonte": fonte,
                             "data_publicacao": data_pub
                         }
@@ -865,7 +859,6 @@ def coletar_stream():
                 except Exception as e:
                     print(f"Erro processando {fonte}: {e}")
         
-        # Registrar coleta
         set_ultima_coleta()
         
         final_data = json.dumps({"type": "complete", "total": total, "novos": len(novos)})
@@ -904,17 +897,28 @@ def limpar_vencidos():
 def export_csv():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("""
-        SELECT titulo, agencia, prazo, valor, link, fonte, data_publicacao, criado_em 
-        FROM editais 
-        ORDER BY criado_em DESC
-    """)
+    
+    try:
+        cur.execute("""
+            SELECT titulo, agencia, prazo, valor, link, fonte, data_publicacao, criado_em 
+            FROM editais 
+            ORDER BY criado_em DESC
+        """)
+        headers = ["titulo", "agencia", "prazo", "valor", "link", "fonte", "data_publicacao", "criado_em"]
+    except sqlite3.OperationalError:
+        cur.execute("""
+            SELECT titulo, agencia, prazo, valor, link, fonte, criado_em 
+            FROM editais 
+            ORDER BY criado_em DESC
+        """)
+        headers = ["titulo", "agencia", "prazo", "valor", "link", "fonte", "criado_em"]
+    
     rows = cur.fetchall()
     conn.close()
     
     si = io.StringIO()
     cw = csv.writer(si)
-    cw.writerow(["titulo", "agencia", "prazo", "valor", "link", "fonte", "data_publicacao", "criado_em"])
+    cw.writerow(headers)
     cw.writerows(rows)
     
     output = si.getvalue().encode("utf-8")
@@ -924,6 +928,141 @@ def export_csv():
         mimetype="text/csv",
         headers={"Content-Disposition": "attachment;filename=editais.csv"}
     )
+
+@app.route("/debug")
+def debug_links():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    
+    try:
+        cur.execute("""
+            SELECT id, titulo, link, fonte 
+            FROM editais 
+            ORDER BY id DESC 
+            LIMIT 10
+        """)
+        rows = cur.fetchall()
+    except Exception as e:
+        return f"<h1>Erro ao buscar dados</h1><p>{e}</p>"
+    
+    conn.close()
+    
+    html = "<html><head><title>Debug - Links</title></head><body>"
+    html += "<h1>🔍 Debug - Últimos 10 editais salvos</h1>"
+    html += "<table border='1' cellpadding='10' style='border-collapse: collapse;'>"
+    html += "<tr><th>ID</th><th>Título</th><th>Link</th><th>Fonte</th></tr>"
+    
+    for row in rows:
+        id_edital, titulo, link, fonte = row
+        link_status = "✅ OK" if link and link.strip() else "❌ VAZIO"
+        html += f"<tr><td>{id_edital}</td><td>{titulo[:50]}...</td><td style='color: {'green' if link else 'red'};'>{link_status}<br><small>{link[:80] if link else 'NULL'}</small></td><td>{fonte}</td></tr>"
+    
+    html += "</table>"
+    html += "<br><a href='/'>← Voltar</a>"
+    html += "</body></html>"
+    
+    return html
+
+@app.route("/limpar_banco")
+def limpar_banco():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        
+        cur.execute("SELECT COUNT(*) FROM editais")
+        total_antes = cur.fetchone()[0]
+        
+        cur.execute("DELETE FROM editais")
+        conn.commit()
+        
+        cur.execute("DELETE FROM config WHERE chave = 'ultima_coleta'")
+        conn.commit()
+        
+        conn.close()
+        
+        html = f"""
+        <html>
+        <head><title>Banco Limpo</title></head>
+        <body style="font-family: Arial; padding: 40px; text-align: center;">
+            <h1 style="color: #48bb78;">✅ Banco de dados limpo com sucesso!</h1>
+            <p style="font-size: 1.2em;">🗑️ <strong>{total_antes}</strong> editais foram removidos</p>
+            <p style="margin-top: 30px;">
+                <a href="/" style="padding: 12px 24px; background: #667eea; color: white; text-decoration: none; border-radius: 8px;">
+                    ← Voltar para página inicial
+                </a>
+            </p>
+            <p style="margin-top: 20px; color: #ed8936;">
+                ⚠️ Execute uma nova coleta para popular o banco novamente
+            </p>
+        </body>
+        </html>
+        """
+        
+        print(f"🗑️ Banco limpo! {total_antes} editais removidos")
+        return html
+        
+    except Exception as e:
+        return f"<h1>❌ Erro ao limpar banco</h1><p>{e}</p><br><a href='/'>Voltar</a>"
+
+@app.route("/download")
+def download_pdf():
+    """Proxy HTTPS para baixar PDFs de URLs HTTP"""
+    url = request.args.get('url', '')
+    
+    if not url:
+        return "<h1>❌ URL não fornecida</h1><a href='/'>Voltar</a>", 400
+    
+    try:
+        print(f"📥 Baixando PDF via proxy: {url}")
+        
+        headers = {"User-Agent": USER_AGENT}
+        r = requests.get(url, headers=headers, timeout=30, stream=True, allow_redirects=True)
+        r.raise_for_status()
+        
+        filename = filename_from_url(url) or "edital.pdf"
+        
+        return Response(
+            r.content,
+            mimetype='application/pdf',
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Content-Type': 'application/pdf',
+            }
+        )
+        
+    except requests.exceptions.Timeout:
+        return f"""
+        <html>
+        <head><title>Timeout</title></head>
+        <body style="font-family: Arial; padding: 40px; text-align: center;">
+            <h1>⏱️ Tempo esgotado</h1>
+            <p>O servidor demorou muito para responder.</p>
+            <p style="margin-top: 20px;">Tente novamente ou acesse diretamente:</p>
+            <p><a href="{url}" target="_blank" style="color: #667eea;">{url[:80]}...</a></p>
+            <p style="margin-top: 20px;">
+                <a href="/" style="color: #667eea;">← Voltar</a>
+            </p>
+        </body>
+        </html>
+        """, 504
+        
+    except Exception as e:
+        print(f"❌ Erro ao baixar PDF: {e}")
+        return f"""
+        <html>
+        <head><title>Erro no Download</title></head>
+        <body style="font-family: Arial; padding: 40px; text-align: center;">
+            <h1>⚠️ Erro ao baixar PDF</h1>
+            <p>Não foi possível acessar o arquivo.</p>
+            <p style="color: #718096; margin-top: 10px;"><small>Erro: {str(e)[:100]}</small></p>
+            <p style="margin-top: 20px;">Tente acessar diretamente:</p>
+            <p><a href="{url}" target="_blank" style="color: #667eea; word-break: break-all;">{url}</a></p>
+            <p style="margin-top: 20px;">
+                <a href="/" style="color: #667eea;">← Voltar</a>
+            </p>
+        </body>
+        </html>
+        """, 500
 
 # ==================== INICIALIZAÇÃO ====================
 if __name__ == "__main__":
@@ -938,7 +1077,6 @@ if __name__ == "__main__":
         print(f"❌ Erro ao inicializar banco: {e}")
         print("⚠️ Continuando sem banco de dados...")
     
-    # Configurar scheduler para coleta automatizada
     try:
         scheduler = BackgroundScheduler()
         scheduler.add_job(
