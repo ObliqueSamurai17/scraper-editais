@@ -58,7 +58,6 @@ def parse_brazilian_date(date_str):
     
     date_str = date_str.strip()
     
-    # Formato: "23 de outubro de 2024"
     match = re.search(r'(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})', date_str, re.I)
     if match:
         day = int(match.group(1))
@@ -71,7 +70,6 @@ def parse_brazilian_date(date_str):
             except ValueError:
                 pass
     
-    # Formato: DD/MM/YYYY ou DD-MM-YYYY ou DD.MM.YYYY
     for sep in ['/', '-', '.']:
         if sep in date_str:
             parts = date_str.split(sep)
@@ -99,7 +97,6 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     
-    # Tabela de editais
     cur.execute("""
     CREATE TABLE IF NOT EXISTS editais (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,7 +112,6 @@ def init_db():
     )
     """)
     
-    # MIGRAÇÃO: Adicionar coluna data_publicacao se não existir
     try:
         cur.execute("SELECT data_publicacao FROM editais LIMIT 1")
     except sqlite3.OperationalError:
@@ -124,7 +120,6 @@ def init_db():
         conn.commit()
         print("✅ Migração concluída!")
     
-    # Tabela de configuração (para última coleta)
     cur.execute("""
     CREATE TABLE IF NOT EXISTS config (
         chave TEXT PRIMARY KEY,
@@ -137,7 +132,6 @@ def init_db():
     conn.close()
 
 def get_ultima_coleta():
-    """Retorna data/hora da última coleta"""
     try:
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
@@ -150,7 +144,6 @@ def get_ultima_coleta():
         return None
 
 def set_ultima_coleta():
-    """Registra data/hora da coleta atual"""
     try:
         agora = datetime.now().strftime("%d/%m/%Y às %H:%M")
         conn = sqlite3.connect(DB_PATH)
@@ -174,7 +167,6 @@ def exists_fp(fp):
     return r
 
 def salvar(d):
-    # VALIDAÇÃO: não salvar se link estiver vazio ou None
     link = d.get("link")
     if not link or link.strip() == "":
         print(f"     ⚠️ Link vazio, não salvando: {d.get('titulo', 'sem título')[:50]}")
@@ -187,7 +179,6 @@ def salvar(d):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     try:
-        # Tentar salvar com data_publicacao
         cur.execute("""
         INSERT INTO editais (titulo, agencia, prazo, valor, link, fonte, data_publicacao, fingerprint)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -197,7 +188,6 @@ def salvar(d):
         conn.commit()
         print(f"     🔗 Link salvo: {link[:80]}")
     except sqlite3.OperationalError:
-        # Se falhar (coluna não existe), salvar sem data_publicacao
         try:
             cur.execute("""
             INSERT INTO editais (titulo, agencia, prazo, valor, link, fonte, fingerprint)
@@ -256,36 +246,28 @@ def extract_first_title_from_text(text):
     return lines[0] if lines else None
 
 def extract_data_publicacao(text):
-    """
-    Extrai data de publicação do edital.
-    Procura por padrões como "Publicado em", "Data de publicação", etc.
-    """
     if not text:
         return None
     
-    # Buscar padrões de publicação nas primeiras linhas
     head = text[:3000]
     
     patterns = [
         r'publicad[oa]\s+em\s*:?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})',
         r'data\s+de\s+publica[çc][ãa]o\s*:?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})',
         r'publica[çc][ãa]o\s*:?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})',
-        r'(\d{1,2}\s+de\s+\w+\s+de\s+\d{4})',  # Data por extenso
+        r'(\d{1,2}\s+de\s+\w+\s+de\s+\d{4})',
     ]
     
     for pattern in patterns:
         match = re.search(pattern, head, re.I)
         if match:
             data_str = match.group(1)
-            # Validar se é uma data válida
             if parse_brazilian_date(data_str):
                 return data_str
     
-    # Se não encontrou padrão específico, pega a primeira data do documento
     dates_found = DATE_RE.findall(head)
     if dates_found:
-        # Pega a primeira data que seja válida
-        for date_str in dates_found[:3]:  # Verifica as 3 primeiras
+        for date_str in dates_found[:3]:
             if parse_brazilian_date(date_str):
                 return date_str
     
@@ -332,15 +314,20 @@ def find_pdf_links_on_page(base_url, html_text):
         if href.lower().endswith(".pdf"):
             full = href if href.startswith("http") else urljoin(base, href)
             title = a.get_text(" ", strip=True) or filename_from_url(full) or ""
-            links.append((full, title))
+            if full and full.startswith("http"):
+                links.append((full, title))
+            else:
+                print(f"     ⚠️ URL inválida ignorada: {full}")
     
     for a in soup.find_all("a", href=True):
         href = a['href'].strip()
         if '?' in href and 'pdf' in href.lower():
             full = href if href.startswith("http") else urljoin(base, href)
             title = a.get_text(" ", strip=True) or filename_from_url(full) or ""
-            if (full, title) not in links:
+            if (full, title) not in links and full and full.startswith("http"):
                 links.append((full, title))
+            elif not full or not full.startswith("http"):
+                print(f"     ⚠️ URL inválida ignorada: {full}")
     
     return links
 
@@ -356,6 +343,10 @@ def find_candidate_links_by_keywords(base_url, html_text, keywords):
                 href = a['href'].strip()
                 txt = a.get_text(" ", strip=True)
                 full = href if href.startswith("http") else urljoin(base, href)
+                
+                if not full or not full.startswith("http"):
+                    continue
+                
                 key = full.split("#")[0].rstrip("/")
                 
                 if key in seen:
@@ -373,6 +364,10 @@ def find_candidate_links_by_keywords(base_url, html_text, keywords):
             href = a['href'].strip()
             txt = a.get_text(" ", strip=True)
             full = href if href.startswith("http") else urljoin(base, href)
+            
+            if not full or not full.startswith("http"):
+                continue
+            
             lowtxt = (txt or "").lower()
             lowhref = full.lower()
             
@@ -383,199 +378,70 @@ def find_candidate_links_by_keywords(base_url, html_text, keywords):
 
 # ==================== LISTA DE FONTES ====================
 SOURCES = [
-    {"url": "http://memoria2.cnpq.br/web/guest/chamadas-publicas", 
-     "fonte": "CNPq", 
-     "keywords": ["edital", "chamada", "chamadas", "call"]},
-    
-    {"url": "https://www.gov.br/capes/pt-br/assuntos/editais", 
-     "fonte": "CAPES", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.finep.gov.br/pt-br", 
-     "fonte": "FINEP", 
-     "keywords": ["edital", "chamada", "chamadas", "programa"]},
-    
-    {"url": "https://www.confap.org.br/", 
-     "fonte": "CONFAP", 
-     "keywords": ["edital", "chamada", "chamadas"]},
-    
-    {"url": "https://fapesp.br/chamadas", 
-     "fonte": "FAPESP (SP)", 
-     "keywords": ["chamada", "edital", "call", "proposal"]},
-    
-    {"url": "https://www.faperj.br/", 
-     "fonte": "FAPERJ (RJ)", 
-     "keywords": ["edital", "chamada", "resultado"]},
-    
-    {"url": "https://fapemig.br/", 
-     "fonte": "FAPEMIG (MG)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fapes.es.gov.br/", 
-     "fonte": "FAPES (ES)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.facepe.br/", 
-     "fonte": "FACEPE (PE)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fapesq.rpp.br/", 
-     "fonte": "FAPESQ (PB)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fapeal.br/", 
-     "fonte": "FAPEAL (AL)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.funcap.ce.gov.br/", 
-     "fonte": "FUNCAP (CE)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fapesb.ba.gov.br/", 
-     "fonte": "FAPESB (BA)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fapern.rn.gov.br/", 
-     "fonte": "FAPERN (RN)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fapepi.pi.gov.br/", 
-     "fonte": "FAPEPI (PI)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fapitec.se.gov.br/", 
-     "fonte": "FAPITEC (SE)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fapema.br/", 
-     "fonte": "FAPEMA (MA)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fapergs.rs.gov.br/", 
-     "fonte": "FAPERGS (RS)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fapesc.sc.gov.br/", 
-     "fonte": "FAPESC (SC)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fappr.pr.gov.br/", 
-     "fonte": "Fundação Araucária (PR)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fap.df.gov.br/", 
-     "fonte": "FAPDF (DF)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fundect.ms.gov.br/", 
-     "fonte": "FUNDECT (MS)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fapeg.go.gov.br/", 
-     "fonte": "FAPEG (GO)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fapeam.am.gov.br/", 
-     "fonte": "FAPEAM (AM)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fapespa.pa.gov.br/", 
-     "fonte": "FAPESPA (PA)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://fapac.ac.gov.br/", 
-     "fonte": "FAPEAC (AC)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fapero.ro.gov.br/", 
-     "fonte": "FAPERO (RO)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.to.gov.br/fapt", 
-     "fonte": "FAPTO (TO)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.fapeap.ap.gov.br/", 
-     "fonte": "FAPEAP (AP)", 
-     "keywords": ["edital", "chamada"]},
-    
-    {"url": "https://www.usaid.gov/work-usaid/partnership-opportunities", 
-     "fonte": "USAID (EUA)", 
-     "keywords": ["call for proposals", "funding", "notice", "grant", "opportunity"]},
-    
-    {"url": "https://www.nsf.gov/funding/", 
-     "fonte": "NSF (EUA)", 
-     "keywords": ["funding", "opportunity", "solicitation", "call"]},
-    
-    {"url": "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/home", 
-     "fonte": "União Europeia (Horizon)", 
-     "keywords": ["call", "funding", "grant", "opportunity"]},
-    
-    {"url": "https://www.afd.fr/en/search?type=calls-for-projects", 
-     "fonte": "AFD (França)", 
-     "keywords": ["call", "notice", "funding", "appel à projets"]},
-    
-    {"url": "https://www.aecid.es/ES/convocatorias", 
-     "fonte": "AECID (Espanha)", 
-     "keywords": ["convocatoria", "call", "notice", "grant"]},
-    
-    {"url": "https://www.ukri.org/opportunity/", 
-     "fonte": "UKRI (Reino Unido)", 
-     "keywords": ["funding", "opportunity", "call"]},
-    
-    {"url": "https://www.nserc-crsng.gc.ca/Professors-Professeurs/Grants-Subs/index_eng.asp", 
-     "fonte": "NSERC (Canadá)", 
-     "keywords": ["funding", "opportunity", "competition"]},
-    
-    {"url": "https://aca-secretariat.be/", 
-     "fonte": "ACA (Academic Cooperation)", 
-     "keywords": ["call", "funding", "opportunity", "grant", "programme"]},
+    {"url": "http://memoria2.cnpq.br/web/guest/chamadas-publicas", "fonte": "CNPq", "keywords": ["edital", "chamada", "chamadas", "call"]},
+    {"url": "https://www.gov.br/capes/pt-br/assuntos/editais", "fonte": "CAPES", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.finep.gov.br/pt-br", "fonte": "FINEP", "keywords": ["edital", "chamada", "chamadas", "programa"]},
+    {"url": "https://www.confap.org.br/", "fonte": "CONFAP", "keywords": ["edital", "chamada", "chamadas"]},
+    {"url": "https://fapesp.br/chamadas", "fonte": "FAPESP (SP)", "keywords": ["chamada", "edital", "call", "proposal"]},
+    {"url": "https://www.faperj.br/", "fonte": "FAPERJ (RJ)", "keywords": ["edital", "chamada", "resultado"]},
+    {"url": "https://fapemig.br/", "fonte": "FAPEMIG (MG)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fapes.es.gov.br/", "fonte": "FAPES (ES)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.facepe.br/", "fonte": "FACEPE (PE)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fapesq.rpp.br/", "fonte": "FAPESQ (PB)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fapeal.br/", "fonte": "FAPEAL (AL)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.funcap.ce.gov.br/", "fonte": "FUNCAP (CE)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fapesb.ba.gov.br/", "fonte": "FAPESB (BA)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fapern.rn.gov.br/", "fonte": "FAPERN (RN)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fapepi.pi.gov.br/", "fonte": "FAPEPI (PI)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fapitec.se.gov.br/", "fonte": "FAPITEC (SE)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fapema.br/", "fonte": "FAPEMA (MA)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fapergs.rs.gov.br/", "fonte": "FAPERGS (RS)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fapesc.sc.gov.br/", "fonte": "FAPESC (SC)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fappr.pr.gov.br/", "fonte": "Fundação Araucária (PR)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fap.df.gov.br/", "fonte": "FAPDF (DF)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fundect.ms.gov.br/", "fonte": "FUNDECT (MS)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fapeg.go.gov.br/", "fonte": "FAPEG (GO)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fapeam.am.gov.br/", "fonte": "FAPEAM (AM)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fapespa.pa.gov.br/", "fonte": "FAPESPA (PA)", "keywords": ["edital", "chamada"]},
+    {"url": "https://fapac.ac.gov.br/", "fonte": "FAPEAC (AC)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fapero.ro.gov.br/", "fonte": "FAPERO (RO)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.to.gov.br/fapt", "fonte": "FAPTO (TO)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.fapeap.ap.gov.br/", "fonte": "FAPEAP (AP)", "keywords": ["edital", "chamada"]},
+    {"url": "https://www.usaid.gov/work-usaid/partnership-opportunities", "fonte": "USAID (EUA)", "keywords": ["call for proposals", "funding", "notice", "grant", "opportunity"]},
+    {"url": "https://www.nsf.gov/funding/", "fonte": "NSF (EUA)", "keywords": ["funding", "opportunity", "solicitation", "call"]},
+    {"url": "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/home", "fonte": "União Europeia (Horizon)", "keywords": ["call", "funding", "grant", "opportunity"]},
+    {"url": "https://www.afd.fr/en/search?type=calls-for-projects", "fonte": "AFD (França)", "keywords": ["call", "notice", "funding", "appel à projets"]},
+    {"url": "https://www.aecid.es/ES/convocatorias", "fonte": "AECID (Espanha)", "keywords": ["convocatoria", "call", "notice", "grant"]},
+    {"url": "https://www.ukri.org/opportunity/", "fonte": "UKRI (Reino Unido)", "keywords": ["funding", "opportunity", "call"]},
+    {"url": "https://www.nserc-crsng.gc.ca/Professors-Professeurs/Grants-Subs/index_eng.asp", "fonte": "NSERC (Canadá)", "keywords": ["funding", "opportunity", "competition"]},
+    {"url": "https://aca-secretariat.be/", "fonte": "ACA (Academic Cooperation)", "keywords": ["call", "funding", "opportunity", "grant", "programme"]},
 ]
 
 # ==================== FILTROS ====================
-EDITAL_KEYWORDS_REQUIRED = [
-    "edital", "chamada", "call", "convocatória", "seleção",
-    "programa", "auxílio", "bolsa", "fomento", "pesquisa"
-]
-
-BLACKLIST_KEYWORDS = [
-    "manual", "instruções", "tutorial", "declaração de imposto",
-    "indicadores institucionais", "relatório", "ata", "prestação de contas",
-    "resultado preliminar", "homologação", "retificação", "errata",
-    "como acessar", "passo a passo", "orientações", "formulário",
-    "www.", "http://", "https://", "obedecendo determinação"
-]
+EDITAL_KEYWORDS_REQUIRED = ["edital", "chamada", "call", "convocatória", "seleção", "programa", "auxílio", "bolsa", "fomento", "pesquisa"]
+BLACKLIST_KEYWORDS = ["manual", "instruções", "tutorial", "declaração de imposto", "indicadores institucionais", "relatório", "ata", "prestação de contas", "resultado preliminar", "homologação", "retificação", "errata", "como acessar", "passo a passo", "orientações", "formulário", "www.", "http://", "https://", "obedecendo determinação"]
 
 def is_likely_edital(titulo, texto):
     if not titulo:
         return False
-    
     titulo_lower = titulo.lower()
     texto_lower = (texto or "").lower()
-    
     for palavra in BLACKLIST_KEYWORDS:
         if palavra in titulo_lower or palavra in texto_lower[:1000]:
             return False
-    
     if len(titulo.strip()) < 10:
         return False
-    
     generic_titles = ["chamada", "edital", "www.", "governo", "fundação"]
     if titulo.strip().lower() in generic_titles:
         return False
-    
-    has_keyword = any(kw in titulo_lower or kw in texto_lower[:2000] 
-                      for kw in EDITAL_KEYWORDS_REQUIRED)
+    has_keyword = any(kw in titulo_lower or kw in texto_lower[:2000] for kw in EDITAL_KEYWORDS_REQUIRED)
     if not has_keyword:
         return False
-    
     has_number_pattern = bool(re.search(r'n[ºº]\s*\d+/\d{4}', titulo_lower))
-    
     if texto:
         word_count = len(texto.split())
         if word_count < 500:
             return False
-    
     score = 0
     if has_number_pattern:
         score += 3
@@ -585,7 +451,6 @@ def is_likely_edital(titulo, texto):
         score += 1
     if re.search(r'r\$\s*[0-9\.,]+', texto_lower[:2000]):
         score += 1
-    
     return score >= 3
 
 def clean_title(titulo):
@@ -630,7 +495,6 @@ def coletar_pdf_first(timeout=REQUEST_TIMEOUT, max_per_source=MAX_PER_SOURCE, pr
             print("⚠ Nenhum PDF direto. Buscando candidatos...")
             cand = find_candidate_links_by_keywords(url, html, keywords)
             print(f"✓ Encontrados {len(cand)} candidatos")
-            
             checked = 0
             for full, txt in cand:
                 if checked >= max_per_source:
@@ -648,30 +512,28 @@ def coletar_pdf_first(timeout=REQUEST_TIMEOUT, max_per_source=MAX_PER_SOURCE, pr
         for pdf_url, link_text in pdfs:
             if count >= max_per_source:
                 break
-            
             title_guess = link_text or filename_from_url(pdf_url) or pdf_url
             print(f"\n  📄 Candidato: {title_guess[:80]}...")
-            
             b = download_bytes(pdf_url, timeout=REQUEST_TIMEOUT)
             if not b:
                 print("     ❌ Falhou download")
                 continue
-            
             text = extract_text_from_pdf_bytes(b)
             if not text:
                 print("     ⚠ PDF sem texto extraível, ignorando...")
                 continue
-            
             titulo = extract_first_title_from_text(text) or title_guess
             titulo = clean_title(titulo)
             prazo, valor = extract_prazo_and_valor(text)
             data_pub = extract_data_publicacao(text)
-            
             if not is_likely_edital(titulo, text):
                 print(f"     ⏭ Não parece ser um edital, ignorando...")
                 count += 1
                 continue
-            
+            if not pdf_url or pdf_url.strip() == "":
+                print(f"     ⚠️ PDF URL vazio, pulando...")
+                count += 1
+                continue
             doc = {
                 "titulo": normalize_text(titulo) or title_guess,
                 "agencia": fonte,
@@ -681,14 +543,12 @@ def coletar_pdf_first(timeout=REQUEST_TIMEOUT, max_per_source=MAX_PER_SOURCE, pr
                 "fonte": fonte,
                 "data_publicacao": data_pub
             }
-            
             if prazo:
                 is_valid = is_date_future(prazo)
                 if is_valid is False:
                     print(f"     ⏭ Prazo vencido ({prazo}), ignorando...")
                     count += 1
                     continue
-            
             if salvar(doc):
                 print(f"     ✅ SALVO: {doc['titulo'][:100]}")
                 if data_pub:
@@ -696,18 +556,13 @@ def coletar_pdf_first(timeout=REQUEST_TIMEOUT, max_per_source=MAX_PER_SOURCE, pr
                 results.append(doc)
             else:
                 print(f"     ⏭ Já existe: {pdf_url[:80]}")
-            
             count += 1
             time.sleep(0.7)
     
-    # Registrar data da coleta
     set_ultima_coleta()
-    
     return results
 
-# ==================== COLETA AUTOMATIZADA ====================
 def job_coleta_automatizada():
-    """Job executado pelo scheduler"""
     print("\n🤖 COLETA AUTOMATIZADA INICIADA")
     print(f"⏰ Horário: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
     try:
@@ -716,60 +571,32 @@ def job_coleta_automatizada():
     except Exception as e:
         print(f"\n❌ Erro na coleta automatizada: {e}")
 
-# ==================== FLASK UI ====================
+# ==================== FLASK ====================
 app = Flask(__name__)
 
 @app.route("/")
 def index():
     termo = request.args.get("q", "").strip()
-    
     try:
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
-        
-        # Verificar se coluna data_publicacao existe
         try:
             if termo:
-                cur.execute("""
-                    SELECT titulo, agencia, prazo, valor, link, fonte, data_publicacao 
-                    FROM editais 
-                    WHERE titulo LIKE ? OR agencia LIKE ? 
-                    ORDER BY criado_em DESC
-                """, (f"%{termo}%", f"%{termo}%"))
+                cur.execute("SELECT titulo, agencia, prazo, valor, link, fonte, data_publicacao FROM editais WHERE titulo LIKE ? OR agencia LIKE ? ORDER BY criado_em DESC", (f"%{termo}%", f"%{termo}%"))
             else:
-                cur.execute("""
-                    SELECT titulo, agencia, prazo, valor, link, fonte, data_publicacao 
-                    FROM editais 
-                    ORDER BY criado_em DESC
-                """)
+                cur.execute("SELECT titulo, agencia, prazo, valor, link, fonte, data_publicacao FROM editais ORDER BY criado_em DESC")
         except sqlite3.OperationalError:
-            # Coluna data_publicacao não existe, buscar sem ela
             if termo:
-                cur.execute("""
-                    SELECT titulo, agencia, prazo, valor, link, fonte, NULL as data_publicacao 
-                    FROM editais 
-                    WHERE titulo LIKE ? OR agencia LIKE ? 
-                    ORDER BY criado_em DESC
-                """, (f"%{termo}%", f"%{termo}%"))
+                cur.execute("SELECT titulo, agencia, prazo, valor, link, fonte, NULL as data_publicacao FROM editais WHERE titulo LIKE ? OR agencia LIKE ? ORDER BY criado_em DESC", (f"%{termo}%", f"%{termo}%"))
             else:
-                cur.execute("""
-                    SELECT titulo, agencia, prazo, valor, link, fonte, NULL as data_publicacao 
-                    FROM editais 
-                    ORDER BY criado_em DESC
-                """)
-        
+                cur.execute("SELECT titulo, agencia, prazo, valor, link, fonte, NULL as data_publicacao FROM editais ORDER BY criado_em DESC")
         rows = cur.fetchall()
-        
-        # Buscar última coleta
         try:
             ultima_coleta = get_ultima_coleta()
         except:
             ultima_coleta = None
-        
         conn.close()
-        
         return render_template("index.html", editais=rows, termo=termo, ultima_coleta=ultima_coleta)
-    
     except Exception as e:
         print(f"Erro na página index: {e}")
         return render_template("index.html", editais=[], termo=termo, ultima_coleta=None)
@@ -779,25 +606,20 @@ def coletar_stream():
     def generate():
         novos = []
         total = len(SOURCES)
-        
         for i in range(1, total + 1):
             data = json.dumps({"type": "progress", "current": i, "total": total})
             yield f"data: {data}\n\n"
-            
             if i <= len(SOURCES):
                 src = SOURCES[i-1]
                 url = src["url"]
                 fonte = src.get("fonte")
                 keywords = src.get("keywords", ["edital", "chamada"])
                 headers = {"User-Agent": USER_AGENT}
-                
                 try:
                     r = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
                     r.raise_for_status()
                     html = r.text
-                    
                     pdfs = find_pdf_links_on_page(url, html)
-                    
                     if not pdfs:
                         cand = find_candidate_links_by_keywords(url, html, keywords)
                         checked = 0
@@ -812,65 +634,41 @@ def coletar_stream():
                                 checked += 1
                             except Exception:
                                 continue
-                    
                     count = 0
                     for pdf_url, link_text in pdfs:
                         if count >= MAX_PER_SOURCE:
                             break
-                        
                         b = download_bytes(pdf_url, timeout=REQUEST_TIMEOUT)
                         if not b:
                             continue
-                        
                         text = extract_text_from_pdf_bytes(b)
                         if not text:
                             continue
-                        
                         titulo = extract_first_title_from_text(text) or link_text
                         titulo = clean_title(titulo)
                         prazo, valor = extract_prazo_and_valor(text)
                         data_pub = extract_data_publicacao(text)
-                        
                         if not is_likely_edital(titulo, text):
                             count += 1
                             continue
-                        
-                        # VALIDAÇÃO: Garantir que pdf_url não está vazio
                         if not pdf_url or pdf_url.strip() == "":
                             count += 1
                             continue
-                        
-                        doc = {
-                            "titulo": normalize_text(titulo) or link_text,
-                            "agencia": fonte,
-                            "prazo": prazo,
-                            "valor": valor,
-                            "link": pdf_url,  # <-- IMPORTANTE: pdf_url deve estar correto
-                            "fonte": fonte,
-                            "data_publicacao": data_pub
-                        }
-                        
+                        doc = {"titulo": normalize_text(titulo) or link_text, "agencia": fonte, "prazo": prazo, "valor": valor, "link": pdf_url, "fonte": fonte, "data_publicacao": data_pub}
                         if prazo:
                             is_valid = is_date_future(prazo)
                             if is_valid is False:
                                 count += 1
                                 continue
-                        
                         if salvar(doc):
                             novos.append(doc)
-                        
                         count += 1
                         time.sleep(0.7)
-                
                 except Exception as e:
                     print(f"Erro processando {fonte}: {e}")
-        
-        # Registrar coleta
         set_ultima_coleta()
-        
         final_data = json.dumps({"type": "complete", "total": total, "novos": len(novos)})
         yield f"data: {final_data}\n\n"
-    
     return Response(generate(), mimetype='text/event-stream')
 
 @app.route("/coletar")
@@ -886,17 +684,14 @@ def limpar_vencidos():
     cur = conn.cursor()
     cur.execute("SELECT id, prazo FROM editais WHERE prazo IS NOT NULL AND prazo != ''")
     rows = cur.fetchall()
-    
     removidos = 0
     for id_edital, prazo in rows:
         is_valid = is_date_future(prazo)
         if is_valid is False:
             cur.execute("DELETE FROM editais WHERE id = ?", (id_edital,))
             removidos += 1
-    
     conn.commit()
     conn.close()
-    
     print(f"🗑️ Removidos {removidos} editais vencidos")
     return f"<h1>Limpeza concluída!</h1><p>Editais removidos: {removidos}</p><a href='/'>Voltar</a>"
 
@@ -904,77 +699,106 @@ def limpar_vencidos():
 def export_csv():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("""
-        SELECT titulo, agencia, prazo, valor, link, fonte, data_publicacao, criado_em 
-        FROM editais 
-        ORDER BY criado_em DESC
-    """)
+    try:
+        cur.execute("SELECT titulo, agencia, prazo, valor, link, fonte, data_publicacao, criado_em FROM editais ORDER BY criado_em DESC")
+        headers = ["titulo", "agencia", "prazo", "valor", "link", "fonte", "data_publicacao", "criado_em"]
+    except sqlite3.OperationalError:
+        cur.execute("SELECT titulo, agencia, prazo, valor, link, fonte, criado_em FROM editais ORDER BY criado_em DESC")
+        headers = ["titulo", "agencia", "prazo", "valor", "link", "fonte", "criado_em"]
     rows = cur.fetchall()
     conn.close()
-    
     si = io.StringIO()
     cw = csv.writer(si)
-    cw.writerow(["titulo", "agencia", "prazo", "valor", "link", "fonte", "data_publicacao", "criado_em"])
+    cw.writerow(headers)
     cw.writerows(rows)
-    
     output = si.getvalue().encode("utf-8")
-    
-    return Response(
-        output,
-        mimetype="text/csv",
-        headers={"Content-Disposition": "attachment;filename=editais.csv"}
-    )
+    return Response(output, mimetype="text/csv", headers={"Content-Disposition": "attachment;filename=editais.csv"})
+
+@app.route("/debug")
+def debug_links():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT id, titulo, link, fonte FROM editais ORDER BY id DESC LIMIT 10")
+        rows = cur.fetchall()
+    except Exception as e:
+        return f"<h1>Erro ao buscar dados</h1><p>{e}</p>"
+    conn.close()
+    html = "<html><head><title>Debug</title></head><body><h1>🔍 Debug - Últimos 10 editais</h1><table border='1' cellpadding='10' style='border-collapse: collapse;'><tr><th>ID</th><th>Título</th><th>Link</th><th>Fonte</th></tr>"
+    for row in rows:
+        id_edital, titulo, link, fonte = row
+        link_status = "✅ OK" if link and link.strip() else "❌ VAZIO"
+        html += f"<tr><td>{id_edital}</td><td>{titulo[:50]}...</td><td style='color: {'green' if link else 'red'};'>{link_status}<br><small>{link[:80] if link else 'NULL'}</small></td><td>{fonte}</td></tr>"
+    html += "</table><br><a href='/'>← Voltar</a></body></html>"
+    return html
+
+@app.route("/limpar_banco")
+def limpar_banco():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM editais")
+        total_antes = cur.fetchone()[0]
+        cur.execute("DELETE FROM editais")
+        conn.commit()
+        cur.execute("DELETE FROM config WHERE chave = 'ultima_coleta'")
+        conn.commit()
+        conn.close()
+        html = f"<html><head><title>Banco Limpo</title></head><body style='font-family: Arial; padding: 40px; text-align: center;'><h1 style='color: #48bb78;'>✅ Banco limpo!</h1><p style='font-size: 1.2em;'>🗑️ <strong>{total_antes}</strong> editais removidos</p><p style='margin-top: 30px;'><a href='/' style='padding: 12px 24px; background: #667eea; color: white; text-decoration: none; border-radius: 8px;'>← Voltar</a></p><p style='margin-top: 20px; color: #ed8936;'>⚠️ Execute nova coleta</p></body></html>"
+        print(f"🗑️ Banco limpo! {total_antes} editais removidos")
+        return html
+    except Exception as e:
+        return f"<h1>❌ Erro</h1><p>{e}</p><br><a href='/'>Voltar</a>"
+
+@app.route("/download")
+def download_pdf():
+    """Proxy HTTPS para baixar PDFs"""
+    url = request.args.get('url', '')
+    if not url:
+        return "<h1>❌ URL não fornecida</h1><a href='/'>Voltar</a>", 400
+    try:
+        print(f"📥 Baixando PDF via proxy: {url}")
+        headers = {"User-Agent": USER_AGENT}
+        r = requests.get(url, headers=headers, timeout=30, stream=True, allow_redirects=True)
+        r.raise_for_status()
+        filename = filename_from_url(url) or "edital.pdf"
+        if not filename.lower().endswith('.pdf'):
+            filename = filename + '.pdf'
+        return Response(r.content, mimetype='application/pdf', headers={'Content-Disposition': f'attachment; filename="{filename}"', 'Content-Type': 'application/pdf'})
+    except requests.exceptions.Timeout:
+        return f"<html><head><title>Timeout</title></head><body style='font-family: Arial; padding: 40px; text-align: center;'><h1>⏱️ Tempo esgotado</h1><p>Tente: <a href='{url}' target='_blank'>{url[:80]}...</a></p><p><a href='/'>← Voltar</a></p></body></html>", 504
+    except Exception as e:
+        print(f"❌ Erro: {e}")
+        return f"<html><head><title>Erro</title></head><body style='font-family: Arial; padding: 40px; text-align: center;'><h1>⚠️ Erro ao baixar</h1><p><small>{str(e)[:100]}</small></p><p>Tente: <a href='{url}' target='_blank' style='word-break: break-all;'>{url}</a></p><p><a href='/'>← Voltar</a></p></body></html>", 500
 
 # ==================== INICIALIZAÇÃO ====================
 if __name__ == "__main__":
     print("="*60)
     print("🎓 SCRAPER DE EDITAIS - Iniciando...")
     print("="*60)
-    
     try:
         init_db()
-        print("✅ Banco de dados inicializado")
+        print("✅ Banco inicializado")
     except Exception as e:
-        print(f"❌ Erro ao inicializar banco: {e}")
-        print("⚠️ Continuando sem banco de dados...")
-    
-    # Configurar scheduler para coleta automatizada
+        print(f"❌ Erro banco: {e}")
     try:
         scheduler = BackgroundScheduler()
-        scheduler.add_job(
-            func=job_coleta_automatizada,
-            trigger="cron",
-            hour=COLETA_HORA,
-            minute=0,
-            id="coleta_diaria",
-            name="Coleta Automatizada Diária"
-        )
+        scheduler.add_job(func=job_coleta_automatizada, trigger="cron", hour=COLETA_HORA, minute=0, id="coleta_diaria", name="Coleta Automatizada Diária")
         scheduler.start()
-        print(f"🤖 Coleta automatizada configurada para {COLETA_HORA}:00 diariamente")
+        print(f"🤖 Coleta automatizada: {COLETA_HORA}:00 diariamente")
     except Exception as e:
-        print(f"⚠️ Scheduler não iniciado: {e}")
-        print("⚠️ Coleta automatizada desabilitada, use coleta manual")
-    
+        print(f"⚠️ Scheduler desabilitado: {e}")
     try:
         ultima = get_ultima_coleta()
-        if ultima:
-            print(f"📅 Última coleta: {ultima}")
-        else:
-            print("📅 Nenhuma coleta registrada ainda")
-    except Exception:
-        print("📅 Sem histórico de coletas")
-    
-    print(f"📊 Fontes configuradas: {len(SOURCES)} agências")
+        print(f"📅 Última coleta: {ultima}" if ultima else "📅 Sem histórico")
+    except:
+        print("📅 Sem histórico")
+    print(f"📊 {len(SOURCES)} agências configuradas")
     nacionais = [s for s in SOURCES if any(x in s['fonte'] for x in ['CNPq', 'CAPES', 'FINEP', 'CONFAP', 'FAP', 'FUNC', 'Fund'])]
     internacionais = [s for s in SOURCES if s not in nacionais]
-    print(f"📋 Total: {len(nacionais)} nacionais + {len(internacionais)} internacionais = {len(SOURCES)} agências")
-    
-    print("\n🌐 Servidor rodando em: http://127.0.0.1:5000")
-    print("   - Página principal: http://127.0.0.1:5000")
-    print("   - Executar coleta manual: http://127.0.0.1:5000/coletar")
-    print("   - Exportar CSV: http://127.0.0.1:5000/export.csv")
-    print("\n💡 Pressione CTRL+C para parar\n")
-    
+    print(f"📋 {len(nacionais)} nacionais + {len(internacionais)} internacionais")
+    print("\n🌐 Servidor: http://127.0.0.1:5000")
+    print("💡 CTRL+C para parar\n")
     try:
         app.run(host="0.0.0.0", port=10000, debug=False)
     except (KeyboardInterrupt, SystemExit):
